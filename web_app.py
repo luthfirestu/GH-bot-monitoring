@@ -276,7 +276,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <div class="section-head">
           <div>
             <h2 class="panel-title">⚡ Grafik Realtime</h2>
-            <div class="sub" id="rtSub">Klik legend untuk sembunyikan seri · scroll/pinch untuk zoom · geser untuk pan</div>
           </div>
           <button class="btn small" id="resetZoomBtn" type="button">Reset zoom</button>
         </div>
@@ -334,13 +333,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <div class="clean-grid" id="cleaningList"></div>
         </div>
       </div>
-    </div>
-
-    <!-- Simulation -->
-    <div class="glass footer">
-      <span>Simulasi untuk uji dashboard:</span>
-      <button class="btn small" id="simDirtyBtn" type="button">Buat atap kotor</button>
-      <button class="btn small" id="simCleanBtn" type="button">Tandai selesai dibersihkan</button>
     </div>
   </div>
 
@@ -435,8 +427,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
        ========================================================= */
     function buildAlerts(r, hist) {
       const a = [];
-      if (r.ai_status === "CRITICAL") a.push({ lvl: "bad", text: `AI mendeteksi kondisi KRITIS (skor ${r.ai_score}%).` });
-      if (r.roof_dirty >= CFG.dirtyCrit) a.push({ lvl: "bad", text: `Roof Dirty ${r.roof_dirty}% sudah sangat tinggi (batas kritis ${CFG.dirtyCrit}%).` });
+      if (r.ai_status === "CRITICAL") a.push({ lvl: "bad", text: `AI mendeteksi kondisi CRITICAL (skor ${r.ai_score}%).` });
+      if (r.roof_dirty >= CFG.dirtyCrit) a.push({ lvl: "bad", text: `Roof Dirty ${r.roof_dirty}% sudah sangat tinggi (batas CRITICAL ${CFG.dirtyCrit}%).` });
       else if (r.roof_dirty >= CFG.dirtyWarn) a.push({ lvl: "warn", text: `Roof Dirty ${r.roof_dirty}% melewati batas ${CFG.dirtyWarn}%. Atap perlu dibersihkan.` });
       if (r.light_transmission < CFG.lightCrit) a.push({ lvl: "bad", text: `Light Transmission hanya ${r.light_transmission}% (di bawah ${CFG.lightCrit}%).` });
       else if (r.light_transmission <= CFG.lightWarn) a.push({ lvl: "warn", text: `Light Transmission ${r.light_transmission}% turun di bawah batas ${CFG.lightWarn}%.` });
