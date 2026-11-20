@@ -1,0 +1,8 @@
+cd C:\Users\ASUS\Documents\gh_bot
+@'
+.venv/
+__pycache__/
+*.pyc
+.env
+gh_state.json
+'@ | Out-File -FilePath .gitignore -Encoding utf8
