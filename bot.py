@@ -117,12 +117,12 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_text(
             "📋 *Daftar Perintah Bot Greenhouse*\n\n"
-            "• `/status` — Laporan lengkap kondisi greenhouse\n"
+            "• `/status` — Status lengkap kondisi greenhouse\n"
             "• `/score` — Lihat nilai AI Score\n"
             "• `/health` — Cek System Health\n"
-            "• `/cleaning` — Simulasi pembersihan atap IoT\n"
-            "• `/ping` — Cek status koneksi bot\n"
-            "• `/help` — Tampilkan bantuan perintah",
+            "• `/cleaning` — Pembersihan atap greenhouse\n"
+            "• `/ping` — Cek koneksi bot\n"
+            "• `/help` — Daftar perintah",
             parse_mode="Markdown",
         )
 
@@ -268,10 +268,10 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def post_init(application) -> None:
     await application.bot.set_my_commands(
         [
-            ("status", "Laporan lengkap kondisi greenhouse"),
+            ("status", "Status lengkap kondisi greenhouse"),
             ("score", "Lihat nilai AI Score"),
             ("health", "Cek System Health"),
-            ("cleaning", "Simulasi pembersihan atap IoT"),
+            ("cleaning", "Pembersihan atap greenhouse"),
             ("ping", "Cek koneksi bot"),
             ("help", "Daftar perintah"),
         ]
