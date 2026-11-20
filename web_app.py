@@ -288,7 +288,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <div class="section-head">
         <div>
           <h2 class="panel-title" id="dailyTitle">📅 Summary Harian</h2>
-          <div class="sub">Data harian sejak Juli 2026 · diperbarui tiap 60 detik</div>
         </div>
         <div class="controls">
           <label for="monthFilter" class="sub" style="margin:0;">Filter bulan</label>
@@ -311,7 +310,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <div class="chart-box"><canvas id="scoreChart"></canvas></div>
         </div>
         <div class="mini-card s6">
-          <h3 class="sub-title">💧 Estimasi Air Siklus (Liter)</h3>
+          <h3 class="sub-title">💧 Estimasi Air (Liter)</h3>
           <div class="chart-box"><canvas id="waterChart"></canvas></div>
         </div>
 
