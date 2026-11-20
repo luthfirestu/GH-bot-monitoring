@@ -3,7 +3,7 @@ title: Bot GH
 emoji: 🐢
 colorFrom: gray
 colorTo: gray
-sdk: static
+sdk: docker
 pinned: false
 license: mit
 ---
