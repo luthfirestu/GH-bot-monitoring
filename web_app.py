@@ -816,8 +816,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
     $("exportMonthlyBtn").addEventListener("click", exportMonthDailyCsv);
     $("monthFilter").addEventListener("change", (e) => { state.month = e.target.value; renderDaily(); });
     $("heatMetric").addEventListener("change", (e) => { state.heatMetric = e.target.value; renderHeatmap(); });
-    $("simDirtyBtn").addEventListener("click", () => simulate("dirty"));
-    $("simCleanBtn").addEventListener("click", () => simulate("clean"));
     document.addEventListener("visibilitychange", () => { if (!document.hidden && !state.paused) fetchRealtime(false); });
 
     fetchDaily().then(() => fetchRealtime(false)).then(scheduleRealtime);
