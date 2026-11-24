@@ -285,6 +285,7 @@ async def _send_cleaning_confirmation(target_message) -> None:
             ]
         ]
     )
+    # Kirim sebagai pesan baru agar pesan status sebelumnya tidak tertimpa
     await target_message.reply_text(
         "🧹 *Konfirmasi Pembersihan Atap IoT*\n\n"
         f"• *Roof Dirty Saat Ini:* `{report['roof_dirty']}%`\n"
@@ -303,7 +304,7 @@ async def cleaning_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _send_cleaning_confirmation(update.message)
 
 
-async def _run_cleaning_animation(message) -> None:
+async def _run_cleaning_animation(progress_message) -> None:
     global _status_cleaning_state
     report = get_gh_report()
     plan = _get_plan_for_dirty(float(report.get("roof_dirty", 0.0)))
@@ -314,7 +315,7 @@ async def _run_cleaning_animation(message) -> None:
     sleep_interval = total_duration / total_steps
 
     await _safe_edit_text(
-        message,
+        progress_message,
         f"🧹 *Memulai Pembersihan Atap IoT* (`{plan['device_id']}`)\n\n"
         f"Durasi: `{total_duration:g}s` | Pompa: `{plan['pump_capacity_m3_per_hour']} m³/jam` | Estimasi Siklus: `{total_target_water} L`\n\n"
         f"`{_make_progress_bar(0)}` *0%*",
@@ -330,7 +331,7 @@ async def _run_cleaning_animation(message) -> None:
 
         if step < total_steps:
             await _safe_edit_text(
-                message,
+                progress_message,
                 f"🧹 *Proses Pembersihan Atap IoT* (`{plan['device_id']}`)\n\n"
                 "Status: Menyemprot & membilas permukaan atap...\n\n"
                 f"Pemakaian air: `{used_water} L` / `{total_target_water} L`\n\n"
@@ -343,10 +344,10 @@ async def _run_cleaning_animation(message) -> None:
                 [[InlineKeyboardButton("📊 Cek Status Terbaru", callback_data="status_refresh")]]
             )
             await _safe_edit_text(
-                message,
+                progress_message,
                 f"✅ *Pembersihan Atap IoT Selesai* (`{plan['device_id']}`)\n\n"
                 f"Total estimasi siklus: `{total_target_water} L` (`{plan['pump_capacity_m3_per_hour']} m³/jam`)\n"
-                "Kondisi atap telah diperbarui menjadi bersih.\n\n"
+                "Kondisi atap telah diperbarui. Tekan *Refresh* pada pesan status atau cek status terbaru untuk melihat data baru.\n\n"
                 f"`{bar}` *100%*",
                 reply_markup=done_keyboard,
             )
@@ -369,13 +370,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             _status_live_message = query.message
 
     elif data_key == "ask_cleaning":
+        # Kirim konfirmasi di pesan baru agar pesan status sebelumnya tetap tersimpan
         await _send_cleaning_confirmation(query.message)
 
     elif data_key == "cleaning_cancel":
         await _safe_edit_text(query.message, "❎ Pembersihan atap dibatalkan.")
 
     elif data_key == "cleaning_confirm":
-        await _run_cleaning_animation(query.message)
+        # Buat pesan progress baru agar pesan konfirmasi & pesan status sebelumnya tetap utuh
+        progress_msg = await query.message.reply_text(
+            "🧹 *Menyiapkan pembersihan atap IoT...*",
+            parse_mode="Markdown",
+        )
+        await _run_cleaning_animation(progress_msg)
 
 
 async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
