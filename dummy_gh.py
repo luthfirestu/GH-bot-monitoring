@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -18,6 +19,8 @@ WIB = timezone(timedelta(hours=7))
 MIN_CLEAN_CYCLE_SECONDS = 120.0  # 2 menit saat bersih / debu tipis
 MAX_CLEAN_CYCLE_SECONDS = 240.0  # 4 menit saat sangat kotor
 DIRTY_CYCLE_CAP = 50.0           # ambang kekotoran penuh untuk durasi maksimum
+AUTO_CLEAN_DIRTY_THRESHOLD = 20.0
+AUTO_CLEAN_LIGHT_THRESHOLD = 70.0
 
 
 def calculate_water_usage_liters(duration_seconds: float) -> float:
@@ -107,39 +110,62 @@ def mark_cleaning_completed() -> None:
     _save_state(state)
 
 
+def _compute_ai_score(
+    roof_dirty: float,
+    light_transmission: float,
+    system_health: str,
+) -> int:
+    """Menghitung AI Score secara deterministik sebagai ringkasan kondisi atap & sistem."""
+    dirty_penalty = max(0.0, roof_dirty - 3.0) * 2.1
+    light_penalty = max(0.0, 100.0 - light_transmission) * 0.45
+    health_penalty = 18.0 if system_health != "NORMAL" else 0.0
+
+    score = 98.0 - dirty_penalty - light_penalty - health_penalty
+    return int(round(max(25.0, min(98.0, score))))
+
+
+def _light_from_dirty(roof_dirty: float) -> float:
+    """
+    Menghitung light_transmission dengan rentang utama 100% ke 70%:
+    - Saat roof_dirty = 0%, light_transmission = 100.0%.
+    - Saat roof_dirty naik hingga 20.0%, light_transmission turun ke 70.0%.
+    - Saat roof_dirty > 20.0%, light_transmission turun di bawah 70.0%.
+    """
+    clamped_dirty = max(0.0, min(95.0, float(roof_dirty)))
+    if clamped_dirty <= AUTO_CLEAN_DIRTY_THRESHOLD:
+        light = 100.0 - (clamped_dirty * 1.5)
+    else:
+        over = clamped_dirty - AUTO_CLEAN_DIRTY_THRESHOLD
+        light = 69.8 - (over * 1.2)
+    return round(max(30.0, min(100.0, light)), 1)
+
+
 def _build_report_from_values(
     light_transmission: float,
     roof_dirty: float,
     system_health: str,
     timestamp_str: str | None = None,
     time_label: str | None = None,
-    stable_score: bool = False,
 ) -> dict[str, Any]:
-    light_transmission = round(max(5.0, min(99.0, light_transmission)), 1)
-    roof_dirty = round(max(1.0, min(95.0, roof_dirty)), 1)
+    roof_dirty = round(max(0.0, min(95.0, roof_dirty)), 1)
+    light_transmission = round(max(5.0, min(100.0, light_transmission)), 1)
 
-    needs_cleaning = roof_dirty >= 20.0 or light_transmission <= 70.0
-    cleaning_recommendation = "CLEANING" if needs_cleaning else "TIDAK PERLU"
+    is_dirty_critical = (
+        roof_dirty > AUTO_CLEAN_DIRTY_THRESHOLD
+        or light_transmission < AUTO_CLEAN_LIGHT_THRESHOLD
+    )
+    cleaning_recommendation = "CLEANING" if is_dirty_critical else "TIDAK PERLU"
 
     spray_seconds = _calculate_spray_seconds_from_dirt(roof_dirty)
     estimated_water_liters = calculate_water_usage_liters(spray_seconds)
+    ai_score = _compute_ai_score(roof_dirty, light_transmission, system_health)
 
-    if system_health == "BAD" and not needs_cleaning:
-        ai_status = "WARNING"
-        ai_score = 72 if stable_score else random.randint(65, 78)
-    elif not needs_cleaning and system_health == "NORMAL":
-        ai_status = "GOOD"
-        raw_score = 96.0 - (roof_dirty * 0.35) - max(0.0, (88.0 - light_transmission) * 0.25)
-        jitter = 0.0 if stable_score else random.uniform(-1.5, 1.5)
-        ai_score = int(round(max(82.0, min(98.0, raw_score + jitter))))
-    elif light_transmission < 30.0 or roof_dirty >= 50.0:
+    if is_dirty_critical:
         ai_status = "CRITICAL"
-        ai_score = 45 if stable_score else random.randint(35, 55)
-    else:
+    elif system_health != "NORMAL":
         ai_status = "WARNING"
-        raw_warn = 80.0 - max(0.0, (roof_dirty - 20.0) * 0.55) - max(0.0, (70.0 - light_transmission) * 0.35)
-        jitter = 0.0 if stable_score else random.uniform(-1.5, 1.5)
-        ai_score = int(round(max(60.0, min(82.0, raw_warn + jitter))))
+    else:
+        ai_status = "GOOD"
 
     return {
         "ai_status": ai_status,
@@ -160,45 +186,42 @@ def _generate_gradual_report(
     force_dirty_next: bool,
     force_clean_after_cleaning: bool,
 ) -> dict[str, Any]:
-    """Menghasilkan data realtime yang bergerak gradual, dengan perubahan kontras saat cleaning / /f."""
+    """Menghasilkan data realtime yang bergerak sangat pelan; perubahan besar hanya pada /f atau cleaning."""
     if force_clean_after_cleaning:
-        clean_dirty = round(random.uniform(3.0, 8.0), 1)
-        clean_light = round(random.uniform(86.0, 94.0), 1)
+        dirty_val = 2.0
         return _build_report_from_values(
-            light_transmission=clean_light,
-            roof_dirty=clean_dirty,
+            light_transmission=_light_from_dirty(dirty_val),
+            roof_dirty=dirty_val,
             system_health="NORMAL",
         )
 
     if force_dirty_next:
-        dirty_val = round(random.uniform(38.0, 62.0), 1)
-        light_val = round(random.uniform(36.0, 58.0), 1)
-        health_val = random.choices(["NORMAL", "BAD"], weights=[0.85, 0.15], k=1)[0]
+        dirty_val = 24.5
         return _build_report_from_values(
-            light_transmission=light_val,
+            light_transmission=_light_from_dirty(dirty_val),
             roof_dirty=dirty_val,
-            system_health=health_val,
-        )
-
-    if prev_report is None:
-        return _build_report_from_values(
-            light_transmission=88.0,
-            roof_dirty=6.0,
             system_health="NORMAL",
         )
 
-    prev_dirty = float(prev_report.get("roof_dirty", 6.0))
-    prev_light = float(prev_report.get("light_transmission", 88.0))
+    if prev_report is None:
+        dirty_val = 2.0
+        return _build_report_from_values(
+            light_transmission=_light_from_dirty(dirty_val),
+            roof_dirty=dirty_val,
+            system_health="NORMAL",
+        )
+
+    prev_dirty = float(prev_report.get("roof_dirty", 2.0))
     prev_health = str(prev_report.get("system_health", "NORMAL"))
 
-    dirty_delta = random.uniform(0.3, 1.2)
-    next_dirty = prev_dirty + dirty_delta
-    next_light = prev_light - (dirty_delta * 0.65) + random.uniform(-0.8, 0.8)
+    dirty_step = random.uniform(0.008, 0.025)
+    next_dirty = min(AUTO_CLEAN_DIRTY_THRESHOLD + 3.0, prev_dirty + dirty_step)
+    next_light = _light_from_dirty(next_dirty)
 
     if prev_health == "NORMAL":
-        next_health = "BAD" if random.random() < 0.03 else "NORMAL"
+        next_health = "BAD" if random.random() < 0.005 else "NORMAL"
     else:
-        next_health = "NORMAL" if random.random() < 0.30 else "BAD"
+        next_health = "NORMAL" if random.random() < 0.35 else "BAD"
 
     return _build_report_from_values(
         light_transmission=next_light,
@@ -249,38 +272,60 @@ def get_gh_report(force_refresh: bool = False) -> dict[str, Any]:
     return current
 
 
+def _pick_month_clean_days(
+    rng: random.Random,
+    year: int,
+    month: int,
+    target_count: int,
+    max_gap_days: int,
+) -> set[int]:
+    """
+    Memilih hari pembersihan dalam sebulan secara terdistribusi agar tidak terlalu acak,
+    dengan batas jarak maksimal antar pembersihan (max_gap_days) agar tidak bolong terlalu lama.
+    """
+    _, days_in_month = monthrange(year, month)
+    count = max(1, min(target_count, days_in_month))
+
+    selected: list[int] = []
+    for idx in range(count):
+        start_day = int(round(idx * (days_in_month / count))) + 1
+        end_day = int(round((idx + 1) * (days_in_month / count)))
+        start_day = max(1, min(days_in_month, start_day))
+        end_day = max(start_day, min(days_in_month, end_day))
+        selected.append(rng.randint(start_day, end_day))
+
+    chosen_set = set(selected)
+    prev_day = 0
+    for d in range(1, days_in_month + 1):
+        if d in chosen_set:
+            prev_day = d
+        elif d - prev_day >= max_gap_days:
+            chosen_set.add(d)
+            prev_day = d
+
+    return chosen_set
+
+
 def _weather_profile_for_date(d: date) -> dict[str, float]:
     """
     Profil cuaca/musim:
-    - Jul s/d Sep: kemarau (debu lebih cepat menumpuk, peluang pembersihan lebih sering).
-    - Okt awal: transisi awal.
-    - Okt akhir s/d Nov+: lebih basah/berawan (penumpukan debu lebih pelan, pembersihan lebih jarang).
+    - Jul s/d Sep: kemarau (~8x/bulan, jarak antar pembersihan maks 4 hari agar tidak bolong seminggu).
+    - Okt dan seterusnya: ~seminggu sekali (~4x/bulan, jarak wajar sekitar 5-9 hari).
     """
     if d.month in (7, 8, 9):
         return {
-            "dust_gain_min": 4.5,
-            "dust_gain_max": 9.5,
-            "light_loss_factor": 0.72,
-            "clean_chance_low": 0.10,
-            "clean_chance_med": 0.35,
-            "clean_chance_high": 0.75,
-        }
-    if d.month == 10 and d.day < 20:
-        return {
-            "dust_gain_min": 3.0,
-            "dust_gain_max": 7.0,
-            "light_loss_factor": 0.62,
-            "clean_chance_low": 0.05,
-            "clean_chance_med": 0.22,
-            "clean_chance_high": 0.55,
+            "dust_gain_min": 2.4,
+            "dust_gain_max": 4.2,
+            "target_cleans_min": 8,
+            "target_cleans_max": 9,
+            "max_gap_days": 4,
         }
     return {
-        "dust_gain_min": 1.5,
-        "dust_gain_max": 4.8,
-        "light_loss_factor": 0.50,
-        "clean_chance_low": 0.02,
-        "clean_chance_med": 0.12,
-        "clean_chance_high": 0.35,
+        "dust_gain_min": 1.3,
+        "dust_gain_max": 2.5,
+        "target_cleans_min": 4,
+        "target_cleans_max": 4,
+        "max_gap_days": 9,
     }
 
 
@@ -290,8 +335,10 @@ def build_daily_summaries(
     extra_cleaned_dates: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Menghasilkan 1 summary harian sejak Juli 2026 dengan pola penumpukan debu dan
-    pembersihan acak yang menyesuaikan kondisi musim/cuaca (tidak terjadwal kaku).
+    Menghasilkan 1 summary harian sejak Juli 2026:
+    - Auto-cleaning dipicu setelah indikator kotor melebihi 20% (sehingga bar > 20% muncul dulu
+      pada hari terdeteksi melebihi ambang, lalu dibersihkan pada hari berikutnya).
+    - Bulan kemarau (Jul-Sep) sekitar 8x pembersihan/bulan tanpa jeda seminggu penuh, dan Okt+ ~seminggu sekali.
     """
     if end_date is None:
         end_date = _now_wib().date()
@@ -302,37 +349,58 @@ def build_daily_summaries(
     summaries: list[dict[str, Any]] = []
     rng = random.Random(20260701)
 
-    dirty_val = 5.0
-    light_val = 90.0
+    current_month_key: tuple[int, int] | None = None
+    month_random_clean_days: set[int] = set()
+
+    dirty_val = 2.0
+    light_val = _light_from_dirty(dirty_val)
+    pending_auto_clean_next_day = False
 
     cur = start_date
     while cur <= end_date:
-        date_str = cur.isoformat()
+        ym = (cur.year, cur.month)
         profile = _weather_profile_for_date(cur)
+        if ym != current_month_key:
+            current_month_key = ym
+            clean_count = rng.randint(
+                int(profile["target_cleans_min"]),
+                int(profile["target_cleans_max"]),
+            )
+            month_random_clean_days = _pick_month_clean_days(
+                rng,
+                cur.year,
+                cur.month,
+                clean_count,
+                int(profile["max_gap_days"]),
+            )
+
+        date_str = cur.isoformat()
         extra_clean_ts = extra_cleaned.get(date_str)
 
         if extra_clean_ts:
             was_cleaned = True
+            pending_auto_clean_next_day = False
+            dirty_val = round(rng.uniform(1.5, 5.0), 1)
+            light_val = _light_from_dirty(dirty_val)
+            cleaned_at = extra_clean_ts
+        elif pending_auto_clean_next_day:
+            was_cleaned = True
+            pending_auto_clean_next_day = False
+            dirty_val = round(rng.uniform(1.5, 5.0), 1)
+            light_val = _light_from_dirty(dirty_val)
+            cleaned_at = f"{date_str} {rng.randint(7, 15):02d}:{rng.randint(0, 59):02d}:00 WIB"
         else:
-            if dirty_val >= 46.0:
-                clean_prob = 0.90
-            elif dirty_val >= 28.0:
-                clean_prob = profile["clean_chance_high"]
-            elif dirty_val >= 18.0:
-                clean_prob = profile["clean_chance_med"]
-            else:
-                clean_prob = profile["clean_chance_low"]
-            was_cleaned = rng.random() < clean_prob
-
-        if was_cleaned:
-            dirty_val = round(rng.uniform(3.0, 8.0), 1)
-            light_val = round(rng.uniform(86.0, 93.0), 1)
-            cleaned_at = extra_clean_ts or f"{date_str} {rng.randint(7, 16):02d}:{rng.randint(0, 59):02d}:00 WIB"
-        else:
-            gain = rng.uniform(profile["dust_gain_min"], profile["dust_gain_max"])
-            dirty_val = min(55.0, dirty_val + gain)
-            light_val = max(44.0, light_val - (gain * profile["light_loss_factor"]) + rng.uniform(-1.2, 1.2))
+            was_cleaned = False
             cleaned_at = None
+            gain = rng.uniform(profile["dust_gain_min"], profile["dust_gain_max"])
+
+            if cur.day in month_random_clean_days:
+                dirty_val = round(max(AUTO_CLEAN_DIRTY_THRESHOLD + 0.8, dirty_val + gain), 1)
+                pending_auto_clean_next_day = True
+            else:
+                dirty_val = round(min(AUTO_CLEAN_DIRTY_THRESHOLD - 0.5, dirty_val + gain), 1)
+
+            light_val = _light_from_dirty(dirty_val)
 
         day_report = _build_report_from_values(
             light_transmission=light_val,
@@ -340,7 +408,6 @@ def build_daily_summaries(
             system_health="NORMAL",
             timestamp_str=f"{date_str} 18:00:00 WIB",
             time_label=date_str[5:],  # MM-DD
-            stable_score=True,
         )
 
         summaries.append(

@@ -201,7 +201,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .pill.bad  { color: var(--bad);  background: rgba(248, 113, 113, 0.14); border-color: rgba(248, 113, 113, 0.4); }
 
     /* ---------- Heatmap ---------- */
-    .hm-wrap { display: flex; flex-wrap: wrap; gap: 14px; max-height: 280px; overflow-y: auto; }
+    .hm-wrap { display: flex; flex-wrap: wrap; gap: 14px; max-height: 300px; overflow-y: auto; }
     .hm-month { flex: 1 1 220px; min-width: 200px; }
     .hm-title { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; text-transform: capitalize; }
     .hm-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
@@ -213,7 +213,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .hm-bar { flex: 1; max-width: 160px; height: 8px; border-radius: 6px; background: linear-gradient(90deg, hsl(0 65% 42%), hsl(65 65% 42%), hsl(130 65% 42%)); }
 
     /* ---------- Cleaning list ---------- */
-    .clean-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; max-height: 240px; overflow-y: auto; padding-right: 4px; }
+    .clean-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; max-height: 300px; overflow-y: auto; padding-right: 4px; }
     .clean-item { background: var(--glass-bg); border: 1px solid var(--inner-border); border-radius: 12px; padding: 10px 12px; font-size: 0.83rem; min-width: 0; }
     .clean-date { font-weight: 700; color: var(--good); }
     .clean-meta { color: var(--text-muted); font-size: 0.76rem; margin-top: 3px; word-break: break-word; }
@@ -310,11 +310,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <div class="chart-box"><canvas id="scoreChart"></canvas></div>
         </div>
         <div class="mini-card s6">
-          <h3 class="sub-title">💧 Estimasi Air (Liter)</h3>
+          <h3 class="sub-title">💧 Penggunaan Air (Liter)</h3>
           <div class="chart-box"><canvas id="waterChart"></canvas></div>
         </div>
 
-        <div class="mini-card s12">
+        <div class="mini-card s6">
           <div class="section-head" style="margin-bottom:8px;">
             <h3 class="sub-title" style="margin:0;">Heatmap kalender</h3>
             <select id="heatMetric" aria-label="Metrik heatmap">
@@ -327,7 +327,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
           <div class="hm-legend"><span>buruk</span><span class="hm-bar"></span><span>baik</span><span>· kotak bergaris = dibersihkan</span></div>
         </div>
 
-        <div class="mini-card s12">
+        <div class="mini-card s6">
           <h3 class="sub-title" id="cleanTitle">🧹 Riwayat Pembersihan</h3>
           <div class="clean-grid" id="cleaningList"></div>
         </div>
@@ -340,7 +340,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
        Konfigurasi & helper
        ========================================================= */
     const CFG = {
-      dirtyWarn: 20, dirtyCrit: 50, dirtyBarRed: 35,
+      dirtyWarn: 15, dirtyCrit: 20, dirtyBarRed: 20,
       lightWarn: 70, lightCrit: 30,
       suddenDrop: 8,            // penurunan light (poin %) antar data realtime
       dailyRefreshMs: 60000
@@ -352,8 +352,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     const toneColor = (t) => css(t === "good" ? "--good" : t === "warn" ? "--warn" : "--bad");
 
     const toneScore = (v) => (v >= 82 ? "good" : v >= 60 ? "warn" : "bad");
-    const toneLight = (v) => (v > CFG.lightWarn ? "good" : v > CFG.lightCrit ? "warn" : "bad");
-    const toneDirty = (v) => (v < CFG.dirtyWarn ? "good" : v < CFG.dirtyCrit ? "warn" : "bad");
+    const toneLight = (v) => (v >= 75 ? "good" : v >= CFG.lightWarn ? "warn" : "bad");
+    const toneDirty = (v) => (v < CFG.dirtyWarn ? "good" : v <= CFG.dirtyCrit ? "warn" : "bad");
     const toneStatus = (s) => (s === "GOOD" ? "good" : s === "WARNING" ? "warn" : "bad");
 
     const state = {
@@ -427,10 +427,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
     function buildAlerts(r, hist) {
       const a = [];
       if (r.ai_status === "CRITICAL") a.push({ lvl: "bad", text: `AI mendeteksi kondisi CRITICAL (skor ${r.ai_score}%).` });
-      if (r.roof_dirty >= CFG.dirtyCrit) a.push({ lvl: "bad", text: `Roof Dirty ${r.roof_dirty}% sudah sangat tinggi (batas CRITICAL ${CFG.dirtyCrit}%).` });
-      else if (r.roof_dirty >= CFG.dirtyWarn) a.push({ lvl: "warn", text: `Roof Dirty ${r.roof_dirty}% melewati batas ${CFG.dirtyWarn}%. Atap perlu dibersihkan.` });
-      if (r.light_transmission < CFG.lightCrit) a.push({ lvl: "bad", text: `Light Transmission hanya ${r.light_transmission}% (di bawah ${CFG.lightCrit}%).` });
-      else if (r.light_transmission <= CFG.lightWarn) a.push({ lvl: "warn", text: `Light Transmission ${r.light_transmission}% turun di bawah batas ${CFG.lightWarn}%.` });
+      if (r.roof_dirty > CFG.dirtyCrit) a.push({ lvl: "bad", text: `Roof Dirty ${r.roof_dirty}% melewati batas CRITICAL (${CFG.dirtyCrit}%).` });
+      else if (r.roof_dirty >= CFG.dirtyWarn) a.push({ lvl: "warn", text: `Roof Dirty ${r.roof_dirty}% mendekati batas pembersihan (${CFG.dirtyCrit}%).` });
+      if (r.light_transmission < CFG.lightWarn) a.push({ lvl: "bad", text: `Light Transmission turun menjadi ${r.light_transmission}% (di bawah batas ${CFG.lightWarn}%).` });
+      else if (r.light_transmission < 75) a.push({ lvl: "warn", text: `Light Transmission ${r.light_transmission}% mulai menurun.` });
       if (r.system_health === "BAD") a.push({ lvl: "warn", text: "System Health BAD: periksa sensor atau perangkat." });
       if (hist.length >= 2) {
         const drop = hist[hist.length - 2].light_transmission - r.light_transmission;
@@ -453,7 +453,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     /* =========================================================
        Chart
        ========================================================= */
-    const dirtyBarColor = (v) => (v >= CFG.dirtyBarRed ? css("--bad") : v >= CFG.dirtyWarn ? css("--warn") : css("--good"));
+    const dirtyBarColor = (v) => (v > CFG.dirtyBarRed ? css("--bad") : v >= CFG.dirtyWarn ? css("--warn") : css("--good"));
     const scoreBarColor = (v) => toneColor(toneScore(v));
 
     function annotationLine(y, text, color) {
@@ -483,7 +483,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
           scales: { x: { ticks: { maxTicksLimit: 12 } }, y: { min: 0, max: 100 } },
           plugins: {
             annotation: { annotations: {
-              dirtyLimit: annotationLine(CFG.dirtyWarn, `Batas dirty ${CFG.dirtyWarn}%`, "rgba(249,115,22,.8)"),
+              dirtyLimit: annotationLine(CFG.dirtyCrit, `Batas dirty ${CFG.dirtyCrit}%`, "rgba(248,113,113,.85)"),
               lightLimit: annotationLine(CFG.lightWarn, `Batas light ${CFG.lightWarn}%`, "rgba(56,189,248,.8)")
             } },
             zoom: {
@@ -511,7 +511,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
           interaction: { mode: "index", intersect: false },
           scales: { x: { ticks: { maxTicksLimit: 15 } }, y: { min: 0, max: 100 } },
           plugins: { annotation: { annotations: {
-            dirtyLimit: annotationLine(CFG.dirtyWarn, `Batas dirty ${CFG.dirtyWarn}%`, "rgba(249,115,22,.8)")
+            dirtyLimit: annotationLine(CFG.dirtyCrit, `Batas dirty ${CFG.dirtyCrit}%`, "rgba(248,113,113,.85)")
           } } }
         }
       });
@@ -521,7 +521,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         scales: { x: { ticks: { maxTicksLimit: 15 } }, y: Object.assign({ min: 0 }, extra) },
         plugins: {
           legend: { display: false },
-          tooltip: { callbacks: { label: (i) => `${i.dataset.label}: ${i.formattedValue}${suffix}` } }
+          tooltip: { callbacks: { label: (i) => i.parsed.y == null ? null : `${i.dataset.label}: ${i.formattedValue}${suffix}` } }
         }
       });
 
@@ -534,14 +534,21 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
       charts.water = new Chart($("waterChart"), {
         type: "bar",
-        data: { labels: [], datasets: [{ label: "Estimasi Air Siklus", data: [], borderRadius: 5,
-          backgroundColor: "rgba(96,165,250,.75)", borderColor: "#60a5fa", borderWidth: 1 }] },
-        options: barOpts(" L", { suggestedMax: 3.5 })
+        data: { labels: [], datasets: [{ label: "Penggunaan Air", data: [], borderRadius: 5,
+          backgroundColor: "rgba(56,189,248,.78)", borderColor: "#38bdf8", borderWidth: 1 }] },
+        options: barOpts(" L", { suggestedMax: 150 })
       });
 
       charts.donut = new Chart($("donutChart"), {
         type: "doughnut",
-        data: { labels: ["GOOD", "WARNING", "CRITICAL"], datasets: [{ data: [0, 0, 0], borderWidth: 0 }] },
+        data: {
+          labels: ["GOOD", "WARNING", "CRITICAL"],
+          datasets: [{
+            data: [0, 0, 0],
+            backgroundColor: [css("--good"), css("--warn"), css("--bad")],
+            borderWidth: 0
+          }]
+        },
         options: {
           responsive: true, maintainAspectRatio: false, cutout: "62%",
           plugins: { legend: { position: "bottom" } }
@@ -612,7 +619,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
     function heatColor(metric, v) {
       let good;
-      if (metric === "roof_dirty") good = 1 - clamp(v / 50, 0, 1);
+      if (metric === "roof_dirty") good = 1 - clamp(v / CFG.dirtyCrit, 0, 1);
       else if (metric === "light_transmission") good = clamp((v - 48) / 42, 0, 1);
       else good = clamp((v - 40) / 58, 0, 1);
       return `hsl(${Math.round(good * 130)} 65% 42%)`;
@@ -647,13 +654,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
       $("cleaningList").innerHTML = ev.length
         ? ev.map((d) => `<div class="clean-item"><div class="clean-date">🧹 ${d.date}</div>
             <div class="clean-meta">Waktu: ${d.cleaned_at || "-"}</div>
-            <div class="clean-meta">Dirty ${d.roof_dirty}% · Light ${d.light_transmission}%</div></div>`).join("")
+            <div class="clean-meta">Air: ${d.estimated_water_liters} L · Dirty ${d.roof_dirty}%</div></div>`).join("")
         : '<div class="clean-item"><div class="clean-meta">Tidak ada pembersihan pada periode ini.</div></div>';
     }
 
     function renderDaily() {
       const fd = filteredDaily();
       const labels = fd.map((d) => d.date.slice(5));
+      const cleanedDays = fd.filter((d) => d.cleaned);
 
       $("dailyTitle").textContent = state.month === "ALL"
         ? `📅 Summary Harian — Semua Bulan (${fd.length} hari)`
@@ -670,8 +678,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
       charts.score.data.datasets[0].data = fd.map((d) => d.ai_score);
       charts.score.update("none");
 
-      charts.water.data.labels = labels;
-      charts.water.data.datasets[0].data = fd.map((d) => d.estimated_water_liters);
+      charts.water.data.labels = cleanedDays.map((d) => d.date.slice(5));
+      charts.water.data.datasets[0].data = cleanedDays.map((d) => d.estimated_water_liters);
       charts.water.update("none");
 
       const count = (s) => fd.filter((d) => d.ai_status === s).length;
@@ -776,6 +784,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       if (!charts.rt) return;
       Chart.defaults.color = css("--text-muted");
       Chart.defaults.borderColor = css("--grid-line");
+      charts.donut.data.datasets[0].backgroundColor = [css("--good"), css("--warn"), css("--bad")];
       Object.values(charts).forEach((c) => c.update("none"));
       renderRealtime();
       renderDaily();
