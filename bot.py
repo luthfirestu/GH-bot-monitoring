@@ -20,15 +20,12 @@ from dummy_gh import (
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Mode demo: update tiap 0.5 detik agar responsif & mulus saat presentasi/demo.
-CLEANING_DEMO_MODE = True
-CLEANING_DEMO_INTERVAL = 0.5
-CLEANING_DEMO_TOTAL_STEPS = 10  # 10 * 0.5s = 5 detik waktu loading
-CLEANING_ANIM_SECONDS = 5.0  # 5 detik animasi loading saat demo
-CLEANING_REAL_STEPS = 10
+CLEANING_STEPS = 20
 
-# Flag saat /auto dipanggil: kondisi diset kotor dan menandai sedang proses cleaning
-_auto_cleaning_in_progress: bool = False
+# State proses cleaning yang tampil langsung di dalam pesan /status (dipicu via /auto)
+_status_cleaning_state: dict | None = None
+_status_cleaning_task: asyncio.Task | None = None
+_status_live_message = None
 
 
 def _make_progress_bar(percent: int, width: int = 12) -> str:
@@ -58,10 +55,36 @@ def _get_plan_for_dirty(roof_dirty: float) -> dict:
         return get_cleaning_plan()
 
 
+def _format_status_cleaning_block(state: dict) -> str:
+    pct = max(0, min(100, int(state.get("pct", 0))))
+    used_water = state.get("used_water", 0.0)
+    total_water = state.get("total_target_water", 0.0)
+    est_seconds = float(state.get("est_seconds", 0.0))
+    est_minutes = round(est_seconds / 60, 1)
+    bar = _make_progress_bar(pct)
+
+    if state.get("completed"):
+        return (
+            "⚙️ *Status Proses:* Pembersihan selesai\n"
+            f"• Estimasi siklus: `~{est_minutes} mnt ({est_seconds:g}s)` | `{total_water} L`\n"
+            "• Status: Permukaan atap telah dibersihkan.\n"
+            f"• Pemakaian air: `{total_water} L` / `{total_water} L`\n"
+            f"`{bar}` *100%*"
+        )
+
+    return (
+        "⚙️ *Status Proses:* Sedang proses cleaning\n"
+        f"• Estimasi siklus: `~{est_minutes} mnt ({est_seconds:g}s)` | `{total_water} L`\n"
+        "• Status: Menyemprot & membilas permukaan atap...\n"
+        f"• Pemakaian air: `{used_water} L` / `{total_water} L`\n"
+        f"`{bar}` *{pct}%*"
+    )
+
+
 def _build_status_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
     rec_icon = "🧹" if data["cleaning_recommendation"] == "CLEANING" else "✅"
     plan = _get_plan_for_dirty(float(data.get("roof_dirty", 0.0)))
-    est_seconds = plan["total_duration_sec"]
+    est_seconds = float(plan["total_duration_sec"])
     est_minutes = round(est_seconds / 60, 1)
     est_water = plan["estimated_water_liters"]
 
@@ -83,14 +106,8 @@ def _build_status_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
         f"💧 *Estimasi Air Siklus (~{est_minutes} mnt / {est_seconds:g}s):* `{est_water} L`",
     ]
 
-    if _auto_cleaning_in_progress:
-        lines.extend(
-            [
-                "",
-                "⚙️ *Status Proses:* Sedang proses cleaning",
-                f"• _Estimasi siklus: ~{est_minutes} mnt ({est_seconds:g}s) | {est_water} L_",
-            ]
-        )
+    if _status_cleaning_state is not None:
+        lines.extend(["", _format_status_cleaning_block(_status_cleaning_state)])
 
     lines.extend(["", f"🕒 _Update: {data['updated_at']}_"])
 
@@ -98,7 +115,8 @@ def _build_status_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton("🔄 Refresh", callback_data="status_refresh")]
     ]
 
-    if data["cleaning_recommendation"] == "CLEANING":
+    is_cleaning_now = _status_cleaning_state is not None and not _status_cleaning_state.get("completed")
+    if data["cleaning_recommendation"] == "CLEANING" and not is_cleaning_now:
         buttons.append([InlineKeyboardButton("🧹 Jalankan Cleaning", callback_data="ask_cleaning")])
 
     return "\n".join(lines), InlineKeyboardMarkup(buttons)
@@ -110,6 +128,65 @@ async def _safe_edit_text(message, text: str, reply_markup=None) -> None:
     except BadRequest as exc:
         if "Message is not modified" not in str(exc):
             raise
+
+
+async def _run_status_cleaning_worker() -> None:
+    """Menjalankan progres cleaning sesuai estimasi siklus dan memperbarui pesan /status."""
+    global _status_cleaning_state, _status_live_message
+
+    state = _status_cleaning_state
+    if state is None:
+        return
+
+    total_steps = CLEANING_STEPS
+    total_duration = max(1.0, float(state["est_seconds"]))
+    sleep_interval = total_duration / total_steps
+    total_target_water = float(state["total_target_water"])
+
+    try:
+        for step in range(1, total_steps + 1):
+            await asyncio.sleep(sleep_interval)
+            if _status_cleaning_state is None:
+                return
+
+            ratio = step / total_steps
+            pct = max(0, min(100, int(round(ratio * 100))))
+            used_water = round(total_target_water * ratio, 2)
+
+            _status_cleaning_state["pct"] = pct
+            _status_cleaning_state["used_water"] = used_water
+
+            if step == total_steps:
+                mark_cleaning_completed()
+                _status_cleaning_state["completed"] = True
+
+            if _status_live_message is not None:
+                report = get_gh_report()
+                text, markup = _build_status_view(report)
+                await _safe_edit_text(_status_live_message, text, reply_markup=markup)
+    except asyncio.CancelledError:
+        raise
+
+
+def _start_status_cleaning_if_needed(report: dict) -> None:
+    """Menyiapkan & memulai task cleaning berbasis estimasi durasi siklus saat /status dipanggil setelah /auto."""
+    global _status_cleaning_state, _status_cleaning_task
+
+    if _status_cleaning_state is not None and (
+        not _status_cleaning_state.get("completed")
+        or (_status_cleaning_task is not None and not _status_cleaning_task.done())
+    ):
+        return
+
+    plan = _get_plan_for_dirty(float(report.get("roof_dirty", 0.0)))
+    _status_cleaning_state = {
+        "est_seconds": float(plan["total_duration_sec"]),
+        "total_target_water": float(plan["estimated_water_liters"]),
+        "used_water": 0.0,
+        "pct": 0,
+        "completed": False,
+    }
+    _status_cleaning_task = asyncio.create_task(_run_status_cleaning_worker())
 
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -152,20 +229,33 @@ async def f_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Command rahasia: set kondisi jadi kotor seperti /f dan tandai sedang proses cleaning."""
-    global _auto_cleaning_in_progress
+    """Command rahasia: set kondisi jadi kotor seperti /f dan siapkan proses cleaning otomatis di /status."""
+    global _status_cleaning_state, _status_cleaning_task, _status_live_message
     if update.message:
+        if _status_cleaning_task is not None and not _status_cleaning_task.done():
+            _status_cleaning_task.cancel()
+        _status_cleaning_state = None
+        _status_cleaning_task = None
+        _status_live_message = None
+
         force_dirty_state()
         get_gh_report(force_refresh=True)
-        _auto_cleaning_in_progress = True
         await update.message.reply_text("ok.")
 
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global _status_live_message
     if update.message:
         data = get_gh_report()
+        if _status_cleaning_state is None and data.get("cleaning_recommendation") == "CLEANING":
+            # Jika baru saja dipicu lewat /auto, mulai cleaning otomatis sesuai estimasi siklus
+            if _status_cleaning_task is None:
+                _start_status_cleaning_if_needed(data)
+
         text, markup = _build_status_view(data)
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+        sent = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+        if _status_cleaning_state is not None and not _status_cleaning_state.get("completed"):
+            _status_live_message = sent
 
 
 async def score_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -186,12 +276,7 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def _send_cleaning_confirmation(target_message) -> None:
     report = get_gh_report()
     plan = _get_plan_for_dirty(float(report.get("roof_dirty", 0.0)))
-    est_minutes = round(plan["total_duration_sec"] / 60, 1)
-    mode_note = (
-        f" _(Loading demo {CLEANING_ANIM_SECONDS:g}s, update tiap {CLEANING_DEMO_INTERVAL:g}s)_"
-        if CLEANING_DEMO_MODE
-        else ""
-    )
+    est_minutes = round(float(plan["total_duration_sec"]) / 60, 1)
     keyboard = InlineKeyboardMarkup(
         [
             [
@@ -205,7 +290,7 @@ async def _send_cleaning_confirmation(target_message) -> None:
         f"• *Roof Dirty Saat Ini:* `{report['roof_dirty']}%`\n"
         f"• *Unit:* `{plan['device_id']}`\n"
         f"• *Pompa:* `{plan['pump_capacity_m3_per_hour']} m³/jam`\n"
-        f"• *Estimasi Durasi Siklus:* `~{est_minutes} menit` (`{plan['total_duration_sec']:g}s`){mode_note}\n"
+        f"• *Estimasi Durasi Siklus:* `~{est_minutes} menit` (`{plan['total_duration_sec']:g}s`)\n"
         f"• *Estimasi Air Siklus:* `{plan['estimated_water_liters']} L`\n\n"
         "Lanjutkan proses pembersihan?",
         parse_mode="Markdown",
@@ -219,22 +304,19 @@ async def cleaning_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def _run_cleaning_animation(message) -> None:
-    global _auto_cleaning_in_progress
+    global _status_cleaning_state
     report = get_gh_report()
     plan = _get_plan_for_dirty(float(report.get("roof_dirty", 0.0)))
     total_target_water = float(plan["estimated_water_liters"])
+    total_duration = max(1.0, float(plan["total_duration_sec"]))
 
-    if CLEANING_DEMO_MODE:
-        total_steps = CLEANING_DEMO_TOTAL_STEPS
-        sleep_interval = CLEANING_ANIM_SECONDS / total_steps  # 5.0 / 10 = 0.5 detik
-    else:
-        total_steps = CLEANING_REAL_STEPS
-        sleep_interval = CLEANING_ANIM_SECONDS / total_steps
+    total_steps = CLEANING_STEPS
+    sleep_interval = total_duration / total_steps
 
     await _safe_edit_text(
         message,
         f"🧹 *Memulai Pembersihan Atap IoT* (`{plan['device_id']}`)\n\n"
-        f"Pompa: `{plan['pump_capacity_m3_per_hour']} m³/jam` | Estimasi Siklus: `{total_target_water} L`\n\n"
+        f"Durasi: `{total_duration:g}s` | Pompa: `{plan['pump_capacity_m3_per_hour']} m³/jam` | Estimasi Siklus: `{total_target_water} L`\n\n"
         f"`{_make_progress_bar(0)}` *0%*",
     )
 
@@ -256,7 +338,7 @@ async def _run_cleaning_animation(message) -> None:
             )
         else:
             mark_cleaning_completed()
-            _auto_cleaning_in_progress = False
+            _status_cleaning_state = None
             done_keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("📊 Cek Status Terbaru", callback_data="status_refresh")]]
             )
@@ -271,6 +353,7 @@ async def _run_cleaning_animation(message) -> None:
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global _status_live_message
     query = update.callback_query
     if not query or not query.message:
         return
@@ -282,6 +365,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         report = get_gh_report(force_refresh=True)
         text, markup = _build_status_view(report)
         await _safe_edit_text(query.message, text, reply_markup=markup)
+        if _status_cleaning_state is not None and not _status_cleaning_state.get("completed"):
+            _status_live_message = query.message
 
     elif data_key == "ask_cleaning":
         await _send_cleaning_confirmation(query.message)
