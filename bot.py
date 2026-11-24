@@ -117,12 +117,26 @@ def _build_status_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
     return "\n".join(lines), InlineKeyboardMarkup(buttons)
 
 
+async def _safe_reply_text(message, text: str, reply_markup=None):
+    try:
+        return await message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+    except BadRequest:
+        plain_text = text.replace("*", "").replace("`", "").replace("_", "")
+        return await message.reply_text(plain_text, reply_markup=reply_markup)
+
+
 async def _safe_edit_text(message, text: str, reply_markup=None) -> None:
     try:
         await message.edit_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     except BadRequest as exc:
-        if "Message is not modified" not in str(exc):
-            raise
+        if "Message is not modified" in str(exc):
+            return
+        plain_text = text.replace("*", "").replace("`", "").replace("_", "")
+        try:
+            await message.edit_text(plain_text, reply_markup=reply_markup)
+        except BadRequest as exc2:
+            if "Message is not modified" not in str(exc2):
+                raise
 
 
 async def _run_status_cleaning_worker() -> None:
@@ -204,18 +218,19 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 ]
             ]
         )
-        await update.message.reply_text(
+        await _safe_reply_text(
+            update.message,
             "🌿 *Bot Monitoring Greenhouse IoT PT Nyalindung*\n\n"
             "Pantau kondisi atap, transmisi cahaya, dan lakukan pembersihan otomatis.\n"
             "Ketik /help untuk melihat daftar perintah.",
-            parse_mode="Markdown",
             reply_markup=keyboard,
         )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(
+        await _safe_reply_text(
+            update.message,
             "📋 *Daftar Perintah Bot Greenhouse*\n\n"
             "• `/status` — Status lengkap kondisi greenhouse\n"
             "• `/score` — Lihat nilai AI Score\n"
@@ -223,7 +238,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "• `/cleaning` — Pembersihan atap greenhouse\n"
             "• `/ping` — Cek koneksi bot\n"
             "• `/help` — Daftar perintah",
-            parse_mode="Markdown",
         )
 
 
@@ -238,7 +252,6 @@ async def f_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         _status_live_message = None
 
         force_dirty_state()
-        get_gh_report(force_refresh=True)
         await update.message.reply_text("ok.")
 
 
@@ -267,7 +280,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             _start_status_cleaning_if_needed(data)
 
         text, markup = _build_status_view(data)
-        sent = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+        sent = await _safe_reply_text(update.message, text, reply_markup=markup)
         if _status_cleaning_state is not None and not _status_cleaning_state.get("completed"):
             _status_live_message = sent
 
@@ -275,15 +288,15 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def score_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         data = get_gh_report()
-        await update.message.reply_text(f"📈 *AI Score:* `{data['ai_score']}%`", parse_mode="Markdown")
+        await _safe_reply_text(update.message, f"📈 *AI Score:* `{data['ai_score']}%`")
 
 
 async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         data = get_gh_report()
-        await update.message.reply_text(
+        await _safe_reply_text(
+            update.message,
             f"🩺 *System Health:* {_health_badge(data['system_health'])}",
-            parse_mode="Markdown",
         )
 
 
@@ -299,8 +312,8 @@ async def _send_cleaning_confirmation(target_message) -> None:
             ]
         ]
     )
-    # Kirim sebagai pesan baru agar pesan status sebelumnya tidak tertimpa
-    await target_message.reply_text(
+    await _safe_reply_text(
+        target_message,
         "🧹 *Konfirmasi Pembersihan Atap IoT*\n\n"
         f"• *Roof Dirty Saat Ini:* `{report['roof_dirty']}%`\n"
         f"• *Unit:* `{plan['device_id']}`\n"
@@ -308,7 +321,6 @@ async def _send_cleaning_confirmation(target_message) -> None:
         f"• *Estimasi Durasi Siklus:* `~{est_minutes} menit` (`{plan['total_duration_sec']:g}s`)\n"
         f"• *Estimasi Air Siklus:* `{plan['estimated_water_liters']} L`\n\n"
         "Lanjutkan proses pembersihan?",
-        parse_mode="Markdown",
         reply_markup=keyboard,
     )
 
@@ -386,19 +398,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             _status_live_message = query.message
 
     elif data_key == "ask_cleaning":
-        # Kirim konfirmasi di pesan baru agar pesan status sebelumnya tetap tersimpan
         await _send_cleaning_confirmation(query.message)
 
     elif data_key == "cleaning_cancel":
         await _safe_edit_text(query.message, "❎ Pembersihan atap dibatalkan.")
 
     elif data_key == "cleaning_confirm":
-        # Buat pesan progress baru agar pesan konfirmasi & pesan status sebelumnya tetap utuh
-        progress_msg = await query.message.reply_text(
+        progress_msg = await _safe_reply_text(
+            query.message,
             "🧹 *Menyiapkan pembersihan atap IoT...*",
-            parse_mode="Markdown",
         )
-        await _run_cleaning_animation(progress_msg)
+        if progress_msg is not None:
+            await _run_cleaning_animation(progress_msg)
 
 
 async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
