@@ -1,8 +1,9 @@
 import asyncio
+import logging
 import os
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Conflict
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -19,6 +20,12 @@ from dummy_gh import (
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
 CLEANING_STEPS = 20
 
@@ -271,7 +278,7 @@ async def fc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    global _status_live_message
+    global _status_cleaning_state, _status_cleaning_task, _status_live_message
     if update.message:
         data = get_gh_report()
         if data.get("cleaning_recommendation") != "CLEANING":
@@ -331,7 +338,7 @@ async def cleaning_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def _run_cleaning_animation(progress_message) -> None:
-    global _status_cleaning_state
+    global _status_cleaning_state, _status_cleaning_task, _status_live_message
     report = get_gh_report()
     plan = _get_plan_for_dirty(float(report.get("roof_dirty", 0.0)))
     total_target_water = float(plan["estimated_water_liters"])
@@ -366,6 +373,8 @@ async def _run_cleaning_animation(progress_message) -> None:
         else:
             mark_cleaning_completed()
             _status_cleaning_state = None
+            _status_cleaning_task = None
+            _status_live_message = None
             done_keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("📊 Cek Status Terbaru", callback_data="status_refresh")]]
             )
@@ -380,7 +389,7 @@ async def _run_cleaning_animation(progress_message) -> None:
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    global _status_live_message
+    global _status_cleaning_state, _status_live_message
     query = update.callback_query
     if not query or not query.message:
         return
@@ -417,6 +426,15 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("🏓 pong")
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if isinstance(context.error, Conflict):
+        logger.warning(
+            "Konflik polling Telegram: ada instance bot lain yang sedang berjalan dengan token yang sama."
+        )
+        return
+    logger.exception("Terjadi error saat memproses update Telegram: %s", context.error)
+
+
 async def post_init(application) -> None:
     await application.bot.set_my_commands(
         [
@@ -446,9 +464,10 @@ def main() -> None:
     app.add_handler(CommandHandler("cleaning", cleaning_cmd))
     app.add_handler(CommandHandler("ping", ping_cmd))
     app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_error_handler(error_handler)
 
     print("Bot berjalan...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
