@@ -296,13 +296,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
       </div>
 
       <div class="grid" style="margin-bottom:0;">
-        <div class="mini-card s8">
+        <div class="mini-card s12">
           <h3 class="sub-title">Roof Dirty vs Light Transmission (▲ = hari pembersihan)</h3>
           <div class="chart-box"><canvas id="comboChart"></canvas></div>
-        </div>
-        <div class="mini-card s4">
-          <h3 class="sub-title">Komposisi status AI</h3>
-          <div class="chart-box"><canvas id="donutChart"></canvas></div>
         </div>
 
         <div class="mini-card s6">
@@ -538,22 +534,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
           backgroundColor: "rgba(56,189,248,.78)", borderColor: "#38bdf8", borderWidth: 1 }] },
         options: barOpts(" L", { suggestedMax: 150 })
       });
-
-      charts.donut = new Chart($("donutChart"), {
-        type: "doughnut",
-        data: {
-          labels: ["GOOD", "WARNING", "CRITICAL"],
-          datasets: [{
-            data: [0, 0, 0],
-            backgroundColor: [css("--good"), css("--warn"), css("--bad")],
-            borderWidth: 0
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false, cutout: "62%",
-          plugins: { legend: { position: "bottom" } }
-        }
-      });
     }
 
     /* =========================================================
@@ -687,11 +667,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
       charts.water.data.datasets[0].data = cleanedDays.map((d) => d.estimated_water_liters);
       charts.water.update("none");
 
-      const count = (s) => fd.filter((d) => d.ai_status === s).length;
-      charts.donut.data.datasets[0].data = [count("GOOD"), count("WARNING"), count("CRITICAL")];
-      charts.donut.data.datasets[0].backgroundColor = [css("--good"), css("--warn"), css("--bad")];
-      charts.donut.update("none");
-
       renderHeatmap();
       renderCleaningList(fd);
     }
@@ -789,7 +764,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
       if (!charts.rt) return;
       Chart.defaults.color = css("--text-muted");
       Chart.defaults.borderColor = css("--grid-line");
-      charts.donut.data.datasets[0].backgroundColor = [css("--good"), css("--warn"), css("--bad")];
       Object.values(charts).forEach((c) => c.update("none"));
       renderRealtime();
       renderDaily();
