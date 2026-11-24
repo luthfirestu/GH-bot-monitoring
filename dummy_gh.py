@@ -348,7 +348,8 @@ def build_daily_summaries(
     Menghasilkan 1 summary harian sejak Juli 2026:
     - Auto-cleaning dipicu setelah indikator kotor melebihi 20% (sehingga bar > 20% muncul dulu
       pada hari terdeteksi melebihi ambang, lalu dibersihkan pada hari berikutnya).
-    - Bulan kemarau (Jul-Sep) sekitar 8x pembersihan/bulan tanpa jeda seminggu penuh, dan Okt+ ~seminggu sekali.
+    - Pemakaian air pada hari pembersihan dihitung berdasarkan kondisi kotor sebelum dibersihkan
+      dengan variasi alami di sekitarnya.
     """
     if end_date is None:
         end_date = _now_wib().date()
@@ -386,19 +387,29 @@ def build_daily_summaries(
 
         date_str = cur.isoformat()
         extra_clean_ts = extra_cleaned.get(date_str)
+        dirty_before_clean: float | None = None
+        clean_water_liters: float | None = None
+        clean_spray_seconds: float | None = None
 
-        if extra_clean_ts:
+        if extra_clean_ts or pending_auto_clean_next_day:
             was_cleaned = True
+            base_dirty = max(AUTO_CLEAN_DIRTY_THRESHOLD + 1.0, dirty_val)
+            jitter_dirty = rng.uniform(-0.8, 7.5)
+            dirty_before_clean = round(
+                max(AUTO_CLEAN_DIRTY_THRESHOLD + 0.6, min(42.0, base_dirty + jitter_dirty)),
+                1,
+            )
+            clean_spray_seconds = _calculate_spray_seconds_from_dirt(dirty_before_clean)
+            clean_water_liters = calculate_water_usage_liters(clean_spray_seconds)
+
             pending_auto_clean_next_day = False
             dirty_val = round(rng.uniform(1.5, 5.0), 1)
             light_val = _light_from_dirty(dirty_val)
-            cleaned_at = extra_clean_ts
-        elif pending_auto_clean_next_day:
-            was_cleaned = True
-            pending_auto_clean_next_day = False
-            dirty_val = round(rng.uniform(1.5, 5.0), 1)
-            light_val = _light_from_dirty(dirty_val)
-            cleaned_at = f"{date_str} {rng.randint(7, 15):02d}:{rng.randint(0, 59):02d}:00 WIB"
+            cleaned_at = (
+                extra_clean_ts
+                if extra_clean_ts
+                else f"{date_str} {rng.randint(7, 15):02d}:{rng.randint(0, 59):02d}:00 WIB"
+            )
         else:
             was_cleaned = False
             cleaned_at = None
@@ -420,12 +431,17 @@ def build_daily_summaries(
             time_label=date_str[5:],  # MM-DD
         )
 
+        if was_cleaned and clean_water_liters is not None and clean_spray_seconds is not None:
+            day_report["spray_seconds"] = clean_spray_seconds
+            day_report["estimated_water_liters"] = clean_water_liters
+
         summaries.append(
             {
                 "date": date_str,
                 "month": f"{cur.year:04d}-{cur.month:02d}",
                 "cleaned": was_cleaned,
                 "cleaned_at": cleaned_at,
+                "roof_dirty_before_clean": dirty_before_clean,
                 **day_report,
             }
         )
@@ -466,8 +482,10 @@ def get_dashboard_payload(
         {
             "date": item["date"],
             "cleaned_at": item["cleaned_at"],
+            "roof_dirty_before": item.get("roof_dirty_before_clean"),
             "roof_dirty_after": item["roof_dirty"],
             "light_transmission_after": item["light_transmission"],
+            "estimated_water_liters": item["estimated_water_liters"],
         }
         for item in filtered_daily
         if item["cleaned"]

@@ -652,9 +652,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
       const ev = fd.filter((d) => d.cleaned).slice().reverse();
       $("cleanTitle").textContent = `🧹 Riwayat Pembersihan (${ev.length}x${state.month !== "ALL" ? " · " + monthLabel(state.month) : ""})`;
       $("cleaningList").innerHTML = ev.length
-        ? ev.map((d) => `<div class="clean-item"><div class="clean-date">🧹 ${d.date}</div>
-            <div class="clean-meta">Waktu: ${d.cleaned_at || "-"}</div>
-            <div class="clean-meta">Air: ${d.estimated_water_liters} L · Dirty ${d.roof_dirty}%</div></div>`).join("")
+        ? ev.map((d) => {
+            const dirtyInfo = d.roof_dirty_before_clean != null
+              ? `Dirty ${d.roof_dirty_before_clean}% → ${d.roof_dirty}%`
+              : `Dirty ${d.roof_dirty}%`;
+            return `<div class="clean-item"><div class="clean-date">🧹 ${d.date}</div>
+              <div class="clean-meta">Waktu: ${d.cleaned_at || "-"}</div>
+              <div class="clean-meta">Air: ${d.estimated_water_liters} L · ${dirtyInfo}</div></div>`;
+          }).join("")
         : '<div class="clean-item"><div class="clean-meta">Tidak ada pembersihan pada periode ini.</div></div>';
     }
 
