@@ -22,7 +22,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 CLEANING_STEPS = 20
 
-# State proses cleaning yang tampil langsung di dalam pesan /status (dipicu via /auto)
+# State proses cleaning yang tampil langsung di dalam pesan /status (dipicu via /f)
 _status_cleaning_state: dict | None = None
 _status_cleaning_task: asyncio.Task | None = None
 _status_live_message = None
@@ -174,7 +174,7 @@ async def _run_status_cleaning_worker() -> None:
 
 
 def _start_status_cleaning_if_needed(report: dict) -> None:
-    """Menyiapkan & memulai task cleaning berbasis estimasi durasi siklus saat /status dipanggil setelah /auto."""
+    """Menyiapkan & memulai task cleaning berbasis estimasi durasi siklus saat /status dipanggil setelah /f."""
     global _status_cleaning_state, _status_cleaning_task
 
     if _status_cleaning_state is not None and (
@@ -228,13 +228,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def f_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message:
-        force_dirty_state()
-        await update.message.reply_text("ok.")
-
-
-async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Command rahasia: set kondisi jadi kotor seperti /f dan siapkan proses cleaning otomatis di /status."""
+    """Command gabungan: set kondisi jadi kotor + siapkan proses auto-cleaning di /status."""
     global _status_cleaning_state, _status_cleaning_task, _status_live_message
     if update.message:
         if _status_cleaning_task is not None and not _status_cleaning_task.done():
@@ -244,6 +238,21 @@ async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         _status_live_message = None
 
         force_dirty_state()
+        get_gh_report(force_refresh=True)
+        await update.message.reply_text("ok.")
+
+
+async def fc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Command force clean: paksa kondisi atap kembali bersih."""
+    global _status_cleaning_state, _status_cleaning_task, _status_live_message
+    if update.message:
+        if _status_cleaning_task is not None and not _status_cleaning_task.done():
+            _status_cleaning_task.cancel()
+        _status_cleaning_state = None
+        _status_cleaning_task = None
+        _status_live_message = None
+
+        mark_cleaning_completed()
         get_gh_report(force_refresh=True)
         await update.message.reply_text("ok.")
 
@@ -419,7 +428,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("f", f_cmd))
-    app.add_handler(CommandHandler("auto", auto_cmd))
+    app.add_handler(CommandHandler("fc", fc_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("score", score_cmd))
     app.add_handler(CommandHandler("health", health_cmd))
