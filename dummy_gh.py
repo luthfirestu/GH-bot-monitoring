@@ -16,8 +16,9 @@ PUMP_CAPACITY_M3_PER_HOUR = 2.0
 PUMP_FLOW_LITERS_PER_SEC = (PUMP_CAPACITY_M3_PER_HOUR * 1000.0) / 3600.0  # ~0.5556 L/s
 WIB = timezone(timedelta(hours=7))
 
-MIN_CLEAN_CYCLE_SECONDS = 120.0  # 2 menit saat bersih / debu tipis
-MAX_CLEAN_CYCLE_SECONDS = 240.0  # 4 menit saat sangat kotor
+GOOD_MIN_CYCLE_SECONDS = 30.0    # 30 detik saat kondisi sangat bersih (0% dirty)
+THRESHOLD_CYCLE_SECONDS = 120.0  # 2 menit tepat saat menyentuh ambang 20% dirty
+MAX_CLEAN_CYCLE_SECONDS = 240.0  # 4 menit saat sangat kotor (>= 50% dirty)
 DIRTY_CYCLE_CAP = 50.0           # ambang kekotoran penuh untuk durasi maksimum
 AUTO_CLEAN_DIRTY_THRESHOLD = 20.0
 AUTO_CLEAN_LIGHT_THRESHOLD = 70.0
@@ -29,10 +30,19 @@ def calculate_water_usage_liters(duration_seconds: float) -> float:
 
 
 def calculate_cleaning_duration_seconds(roof_dirty: float) -> float:
-    """Menghitung estimasi durasi siklus pembersihan (detik) berdasarkan tingkat kotor atap (0 - 100%)."""
+    """
+    Menghitung estimasi durasi siklus pembersihan (detik) berdasarkan tingkat kotor atap (0 - 100%):
+    - Kondisi GOOD (0% - 20%): 30s - 120s (di bawah 2 menit).
+    - Kondisi CRITICAL (> 20% - 50%+): 120s - 240s (2 - 4 menit).
+    """
     clamped_dirty = max(0.0, min(100.0, float(roof_dirty)))
-    ratio = max(0.0, min(1.0, clamped_dirty / DIRTY_CYCLE_CAP))
-    duration = MIN_CLEAN_CYCLE_SECONDS + ratio * (MAX_CLEAN_CYCLE_SECONDS - MIN_CLEAN_CYCLE_SECONDS)
+    if clamped_dirty <= AUTO_CLEAN_DIRTY_THRESHOLD:
+        ratio = clamped_dirty / AUTO_CLEAN_DIRTY_THRESHOLD
+        duration = GOOD_MIN_CYCLE_SECONDS + ratio * (THRESHOLD_CYCLE_SECONDS - GOOD_MIN_CYCLE_SECONDS)
+    else:
+        over_span = max(1.0, DIRTY_CYCLE_CAP - AUTO_CLEAN_DIRTY_THRESHOLD)
+        ratio = max(0.0, min(1.0, (clamped_dirty - AUTO_CLEAN_DIRTY_THRESHOLD) / over_span))
+        duration = THRESHOLD_CYCLE_SECONDS + ratio * (MAX_CLEAN_CYCLE_SECONDS - THRESHOLD_CYCLE_SECONDS)
     return round(duration, 1)
 
 

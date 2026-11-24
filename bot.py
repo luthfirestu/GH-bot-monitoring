@@ -63,15 +63,6 @@ def _format_status_cleaning_block(state: dict) -> str:
     est_minutes = round(est_seconds / 60, 1)
     bar = _make_progress_bar(pct)
 
-    if state.get("completed"):
-        return (
-            "⚙️ *Status Proses:* Pembersihan selesai\n"
-            f"• Estimasi siklus: `~{est_minutes} mnt ({est_seconds:g}s)` | `{total_water} L`\n"
-            "• Status: Permukaan atap telah dibersihkan.\n"
-            f"• Pemakaian air: `{total_water} L` / `{total_water} L`\n"
-            f"`{bar}` *100%*"
-        )
-
     return (
         "⚙️ *Status Proses:* Sedang proses cleaning\n"
         f"• Estimasi siklus: `~{est_minutes} mnt ({est_seconds:g}s)` | `{total_water} L`\n"
@@ -106,7 +97,12 @@ def _build_status_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
         f"💧 *Estimasi Air Siklus (~{est_minutes} mnt / {est_seconds:g}s):* `{est_water} L`",
     ]
 
-    if _status_cleaning_state is not None:
+    is_cleaning_active = (
+        _status_cleaning_state is not None
+        and not _status_cleaning_state.get("completed")
+        and data.get("cleaning_recommendation") == "CLEANING"
+    )
+    if is_cleaning_active and _status_cleaning_state is not None:
         lines.extend(["", _format_status_cleaning_block(_status_cleaning_state)])
 
     lines.extend(["", f"🕒 _Update: {data['updated_at']}_"])
@@ -115,8 +111,7 @@ def _build_status_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton("🔄 Refresh", callback_data="status_refresh")]
     ]
 
-    is_cleaning_now = _status_cleaning_state is not None and not _status_cleaning_state.get("completed")
-    if data["cleaning_recommendation"] == "CLEANING" and not is_cleaning_now:
+    if data["cleaning_recommendation"] == "CLEANING" and not is_cleaning_active:
         buttons.append([InlineKeyboardButton("🧹 Jalankan Cleaning", callback_data="ask_cleaning")])
 
     return "\n".join(lines), InlineKeyboardMarkup(buttons)
@@ -132,7 +127,7 @@ async def _safe_edit_text(message, text: str, reply_markup=None) -> None:
 
 async def _run_status_cleaning_worker() -> None:
     """Menjalankan progres cleaning sesuai estimasi siklus dan memperbarui pesan /status."""
-    global _status_cleaning_state, _status_live_message
+    global _status_cleaning_state, _status_cleaning_task, _status_live_message
 
     state = _status_cleaning_state
     if state is None:
@@ -158,13 +153,23 @@ async def _run_status_cleaning_worker() -> None:
 
             if step == total_steps:
                 mark_cleaning_completed()
-                _status_cleaning_state["completed"] = True
+                _status_cleaning_state = None
+                _status_cleaning_task = None
+                live_msg = _status_live_message
+                _status_live_message = None
+                if live_msg is not None:
+                    report = get_gh_report()
+                    text, markup = _build_status_view(report)
+                    await _safe_edit_text(live_msg, text, reply_markup=markup)
+                return
 
             if _status_live_message is not None:
                 report = get_gh_report()
                 text, markup = _build_status_view(report)
                 await _safe_edit_text(_status_live_message, text, reply_markup=markup)
     except asyncio.CancelledError:
+        _status_cleaning_state = None
+        _status_cleaning_task = None
         raise
 
 
@@ -200,8 +205,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             ]
         )
         await update.message.reply_text(
-            "🌿 *Bot Monitoring Greenhouse IoT Aktif*\n\n"
-            "Pantau kondisi atap, transmisi cahaya, dan picu pembersihan otomatis.\n"
+            "🌿 *Bot Monitoring Greenhouse IoT PT Nyalindung*\n\n"
+            "Pantau kondisi atap, transmisi cahaya, dan lakukan pembersihan otomatis.\n"
             "Ketik /help untuk melihat daftar perintah.",
             parse_mode="Markdown",
             reply_markup=keyboard,
@@ -247,10 +252,10 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     global _status_live_message
     if update.message:
         data = get_gh_report()
-        if _status_cleaning_state is None and data.get("cleaning_recommendation") == "CLEANING":
-            # Jika baru saja dipicu lewat /auto, mulai cleaning otomatis sesuai estimasi siklus
-            if _status_cleaning_task is None:
-                _start_status_cleaning_if_needed(data)
+        if data.get("cleaning_recommendation") != "CLEANING":
+            _status_cleaning_state = None
+        elif _status_cleaning_state is None and _status_cleaning_task is None:
+            _start_status_cleaning_if_needed(data)
 
         text, markup = _build_status_view(data)
         sent = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -364,6 +369,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data_key == "status_refresh":
         report = get_gh_report(force_refresh=True)
+        if report.get("cleaning_recommendation") != "CLEANING":
+            _status_cleaning_state = None
         text, markup = _build_status_view(report)
         await _safe_edit_text(query.message, text, reply_markup=markup)
         if _status_cleaning_state is not None and not _status_cleaning_state.get("completed"):
