@@ -575,7 +575,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
       setPill("aiStatus", r.ai_status, toneStatus(r.ai_status));
       setPill("rec", r.cleaning_recommendation, r.cleaning_recommendation === "CLEANING" ? "bad" : "good");
       setPill("health", r.system_health, r.system_health === "NORMAL" ? "good" : "bad");
-      $("water").textContent = `${r.estimated_water_liters} L (${r.spray_seconds}s)`;
+      const estSec = Number(r.spray_seconds || 0);
+      const estMin = (estSec / 60).toFixed(1);
+      $("water").textContent = `${r.estimated_water_liters} L (~${estMin} mnt / ${estSec}s)`;
       $("updatedAt").textContent = `Update terakhir: ${r.updated_at}`;
 
       const c = charts.rt;

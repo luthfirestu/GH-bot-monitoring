@@ -373,9 +373,33 @@ def get_dashboard_payload(
     }
 
 
-def get_cleaning_plan(total_duration_sec: float = 270.0) -> dict[str, Any]:
-    """Menyiapkan rencana estimasi pembersihan atap IoT (default 270 detik = 4.5 menit)."""
-    duration = round(float(total_duration_sec), 2)
+MIN_CLEAN_CYCLE_SECONDS = 120.0  # 2 menit saat bersih / debu tipis
+MAX_CLEAN_CYCLE_SECONDS = 240.0  # 4 menit saat sangat kotor
+DIRTY_CYCLE_CAP = 50.0           # ambang kekotoran penuh untuk durasi maksimum
+
+
+def calculate_cleaning_duration_seconds(roof_dirty: float) -> float:
+    """Menghitung estimasi durasi siklus pembersihan (detik) berdasarkan tingkat kotor atap (0 - 100%)."""
+    clamped_dirty = max(0.0, min(100.0, float(roof_dirty)))
+    ratio = max(0.0, min(1.0, clamped_dirty / DIRTY_CYCLE_CAP))
+    duration = MIN_CLEAN_CYCLE_SECONDS + ratio * (MAX_CLEAN_CYCLE_SECONDS - MIN_CLEAN_CYCLE_SECONDS)
+    return round(duration, 1)
+
+def get_cleaning_plan(
+    roof_dirty: float | None = None,
+    total_duration_sec: float | None = None,
+) -> dict[str, Any]:
+    """Menyiapkan rencana estimasi pembersihan atap IoT berdasarkan tingkat kotor atap."""
+    if total_duration_sec is not None:
+        duration = round(max(1.0, float(total_duration_sec)), 2)
+    else:
+        dirty_val = (
+            float(roof_dirty)
+            if roof_dirty is not None
+            else float(get_gh_report().get("roof_dirty", 0.0))
+        )
+        duration = calculate_cleaning_duration_seconds(dirty_val)
+
     water_liters = calculate_water_usage_liters(duration)
     return {
         "device_id": "GH-ROOF-CLEANER-01",
