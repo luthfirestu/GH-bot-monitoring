@@ -167,7 +167,7 @@ def _build_report_from_values(
     estimated_water_liters = calculate_water_usage_liters(spray_seconds)
     ai_score = _compute_ai_score(roof_dirty, light_transmission, system_health)
 
-    if is_light_trigger or roof_dirty > AUTO_CLEAN_DIRTY_THRESHOLD:
+    if is_light_trigger:
         ai_status = "CRITICAL"
     elif system_health != "NORMAL":
         ai_status = "WARNING"

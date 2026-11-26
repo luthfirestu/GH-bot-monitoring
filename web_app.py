@@ -479,7 +479,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
           scales: { x: { ticks: { maxTicksLimit: 12 } }, y: { min: 0, max: 100 } },
           plugins: {
             annotation: { annotations: {
-              dirtyLimit: annotationLine(CFG.dirtyCrit, `Batas dirty ${CFG.dirtyCrit}%`, "rgba(248,113,113,.85)"),
               lightLimit: annotationLine(CFG.lightWarn, `Batas light ${CFG.lightWarn}%`, "rgba(56,189,248,.8)")
             } },
             zoom: {
@@ -507,7 +506,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
           interaction: { mode: "index", intersect: false },
           scales: { x: { ticks: { maxTicksLimit: 15 } }, y: { min: 0, max: 100 } },
           plugins: { annotation: { annotations: {
-            dirtyLimit: annotationLine(CFG.dirtyCrit, `Batas dirty ${CFG.dirtyCrit}%`, "rgba(248,113,113,.85)"),
             lightLimit: annotationLine(CFG.lightWarn, `Batas light ${CFG.lightWarn}%`, "rgba(56,189,248,.8)")
           } } }
         }
