@@ -134,19 +134,34 @@ def _compute_ai_score(
     return int(round(max(25.0, min(98.0, score))))
 
 
-def _light_from_dirty(roof_dirty: float) -> float:
+def _dirty_from_light(light_transmission: float) -> float:
     """
-    Menghitung light_transmission:
-    - Saat roof_dirty = 0%, light_transmission = 100.0%.
-    - Saat roof_dirty naik hingga 20.0%, light_transmission turun ke 70.0%.
-    - Saat roof_dirty > 20.0%, light_transmission turun bertahap hingga menembus < 30.0%.
+    Menghitung roof_dirty agar konsisten dengan ambang cahaya 30%:
+    - Saat light >= 30.0%: roof_dirty berada di rentang 0.0% - 19.5% (selalu <= 20%).
+    - Saat light < 30.0%: roof_dirty naik melewati > 20.0% menuju kisaran ~54% - 62%.
     """
-    clamped_dirty = max(0.0, min(95.0, float(roof_dirty)))
-    if clamped_dirty <= AUTO_CLEAN_DIRTY_THRESHOLD:
-        light = 100.0 - (clamped_dirty * 1.5)
+    clamped_light = max(5.0, min(100.0, float(light_transmission)))
+    if clamped_light >= AUTO_CLEAN_LIGHT_THRESHOLD:
+        span = 100.0 - AUTO_CLEAN_LIGHT_THRESHOLD
+        ratio = (100.0 - clamped_light) / span
+        dirty = ratio * 19.5
     else:
-        over = clamped_dirty - AUTO_CLEAN_DIRTY_THRESHOLD
-        light = 69.8 - (over * 1.2)
+        deficit = AUTO_CLEAN_LIGHT_THRESHOLD - clamped_light
+        dirty = 20.2 + (deficit * 1.35)
+    return round(max(0.0, min(95.0, dirty)), 1)
+
+
+def _light_from_dirty(roof_dirty: float) -> float:
+    """Menghitung light_transmission yang selaras dengan _dirty_from_light."""
+    clamped_dirty = max(0.0, min(95.0, float(roof_dirty)))
+    if clamped_dirty <= 19.5:
+        ratio = clamped_dirty / 19.5
+        light = 100.0 - (ratio * (100.0 - AUTO_CLEAN_LIGHT_THRESHOLD))
+    elif clamped_dirty <= AUTO_CLEAN_DIRTY_THRESHOLD:
+        light = AUTO_CLEAN_LIGHT_THRESHOLD
+    else:
+        over = clamped_dirty - 20.2
+        light = AUTO_CLEAN_LIGHT_THRESHOLD - (over / 1.35)
     return round(max(5.0, min(100.0, light)), 1)
 
 
@@ -195,25 +210,28 @@ def _generate_gradual_report(
 ) -> dict[str, Any]:
     """Menghasilkan data realtime yang bergerak sangat pelan; perubahan besar hanya pada /f atau cleaning."""
     if force_clean_after_cleaning:
-        dirty_val = 2.0
+        light_val = _light_from_dirty(2.0)
+        dirty_val = _dirty_from_light(light_val)
         return _build_report_from_values(
-            light_transmission=_light_from_dirty(dirty_val),
+            light_transmission=light_val,
             roof_dirty=dirty_val,
             system_health="NORMAL",
         )
 
     if force_dirty_next:
-        dirty_val = 58.0
+        light_val = 24.0
+        dirty_val = _dirty_from_light(light_val)
         return _build_report_from_values(
-            light_transmission=_light_from_dirty(dirty_val),
+            light_transmission=light_val,
             roof_dirty=dirty_val,
             system_health="NORMAL",
         )
 
     if prev_report is None:
-        dirty_val = 2.0
+        light_val = _light_from_dirty(2.0)
+        dirty_val = _dirty_from_light(light_val)
         return _build_report_from_values(
-            light_transmission=_light_from_dirty(dirty_val),
+            light_transmission=light_val,
             roof_dirty=dirty_val,
             system_health="NORMAL",
         )
@@ -222,7 +240,7 @@ def _generate_gradual_report(
     prev_health = str(prev_report.get("system_health", "NORMAL"))
 
     dirty_step = random.uniform(0.008, 0.025)
-    next_dirty = min(AUTO_CLEAN_DIRTY_THRESHOLD + 3.0, prev_dirty + dirty_step)
+    next_dirty = min(19.5, prev_dirty + dirty_step)
     next_light = _light_from_dirty(next_dirty)
 
     if prev_health == "NORMAL":
@@ -343,10 +361,9 @@ def build_daily_summaries(
 ) -> list[dict[str, Any]]:
     """
     Menghasilkan 1 summary harian sejak Juli 2026:
-    - Kotoran atap naik secara bertahap dan landai dari hari ke hari sehingga
-      intensitas cahaya (light_transmission) turun pelan menuju < 30% sebelum dibersihkan.
-    - Pemakaian air pada hari pembersihan dihitung berdasarkan kondisi kotor sebelum dibersihkan
-      dengan variasi alami di sekitarnya.
+    - Selama light_transmission >= 30%, roof_dirty tetap <= 19.5% (di bawah 20%).
+    - Saat hari trigger pembersihan, light_transmission turun menembus < 30% sehingga
+      roof_dirty melewati > 20% secara bertahap sebelum dibersihkan.
     """
     if end_date is None:
         end_date = _now_wib().date()
@@ -360,8 +377,8 @@ def build_daily_summaries(
     current_month_key: tuple[int, int] | None = None
     month_random_clean_days: set[int] = set()
 
-    dirty_val = 2.0
-    light_val = _light_from_dirty(dirty_val)
+    light_val = 97.2
+    dirty_val = _dirty_from_light(light_val)
     pending_auto_clean_next_day = False
 
     cur = start_date
@@ -402,6 +419,7 @@ def build_daily_summaries(
             pending_auto_clean_next_day = False
             dirty_val = round(rng.uniform(1.5, 4.5), 1)
             light_val = _light_from_dirty(dirty_val)
+            dirty_val = _dirty_from_light(light_val)
             cleaned_at = (
                 extra_clean_ts
                 if extra_clean_ts
@@ -411,7 +429,6 @@ def build_daily_summaries(
             was_cleaned = False
             cleaned_at = None
 
-            # Hitung berapa hari lagi menuju hari trigger berikutnya agar kenaikan landai & tidak curam
             days_until_trigger = 1
             probe = cur
             while probe.day not in month_random_clean_days and days_until_trigger < int(profile["max_gap_days"]):
@@ -420,22 +437,23 @@ def build_daily_summaries(
                     break
                 days_until_trigger += 1
 
-            target_trigger_dirty = rng.uniform(53.5, 57.5)
-            needed_gain = max(0.0, target_trigger_dirty - dirty_val)
+            target_trigger_light = rng.uniform(25.0, 29.0)
+            needed_light_drop = max(0.0, light_val - target_trigger_light)
 
             if cur.day in month_random_clean_days:
-                # Hari trigger: pastikan melewati ambang cahaya < 30% (dirty >= 53.3%) secara halus
-                step_gain = max(rng.uniform(5.5, 11.5), needed_gain)
-                dirty_val = round(min(61.0, dirty_val + step_gain), 1)
+                # Hari trigger: turun melewati ambang < 30% sehingga roof_dirty > 20%
+                light_drop = max(rng.uniform(4.5, 9.5), needed_light_drop)
+                light_val = round(max(22.0, light_val - light_drop), 1)
+                dirty_val = _dirty_from_light(light_val)
                 pending_auto_clean_next_day = True
             else:
-                # Bagi sisa kenaikan secara bertahap di hari-hari sebelum trigger
-                avg_step = needed_gain / max(1, days_until_trigger)
+                # Hari normal: jaga light_transmission tetap >= 30.0% agar roof_dirty <= 19.5%
+                safe_drop_budget = max(0.0, light_val - AUTO_CLEAN_LIGHT_THRESHOLD)
+                avg_drop = safe_drop_budget / max(1, days_until_trigger)
                 jitter = rng.uniform(0.85, 1.15)
-                step_gain = max(2.5, avg_step * jitter)
-                dirty_val = round(min(52.5, dirty_val + step_gain), 1)
-
-            light_val = _light_from_dirty(dirty_val)
+                light_drop = min(safe_drop_budget, max(1.8, avg_drop * jitter))
+                light_val = round(max(AUTO_CLEAN_LIGHT_THRESHOLD, light_val - light_drop), 1)
+                dirty_val = _dirty_from_light(light_val)
 
         day_report = _build_report_from_values(
             light_transmission=light_val,
