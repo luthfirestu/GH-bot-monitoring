@@ -21,7 +21,7 @@ THRESHOLD_CYCLE_SECONDS = 120.0  # 2 menit tepat saat menyentuh ambang 20% dirty
 MAX_CLEAN_CYCLE_SECONDS = 240.0  # 4 menit saat sangat kotor (>= 50% dirty)
 DIRTY_CYCLE_CAP = 50.0           # ambang kekotoran penuh untuk durasi maksimum
 AUTO_CLEAN_DIRTY_THRESHOLD = 20.0
-AUTO_CLEAN_LIGHT_THRESHOLD = 70.0
+AUTO_CLEAN_LIGHT_THRESHOLD = 30.0
 
 
 def calculate_water_usage_liters(duration_seconds: float) -> float:
@@ -136,10 +136,10 @@ def _compute_ai_score(
 
 def _light_from_dirty(roof_dirty: float) -> float:
     """
-    Menghitung light_transmission dengan rentang utama 100% ke 70%:
+    Menghitung light_transmission:
     - Saat roof_dirty = 0%, light_transmission = 100.0%.
     - Saat roof_dirty naik hingga 20.0%, light_transmission turun ke 70.0%.
-    - Saat roof_dirty > 20.0%, light_transmission turun di bawah 70.0%.
+    - Saat roof_dirty > 20.0%, light_transmission turun bertahap hingga menembus < 30.0%.
     """
     clamped_dirty = max(0.0, min(95.0, float(roof_dirty)))
     if clamped_dirty <= AUTO_CLEAN_DIRTY_THRESHOLD:
@@ -147,7 +147,7 @@ def _light_from_dirty(roof_dirty: float) -> float:
     else:
         over = clamped_dirty - AUTO_CLEAN_DIRTY_THRESHOLD
         light = 69.8 - (over * 1.2)
-    return round(max(30.0, min(100.0, light)), 1)
+    return round(max(5.0, min(100.0, light)), 1)
 
 
 def _build_report_from_values(
@@ -160,17 +160,14 @@ def _build_report_from_values(
     roof_dirty = round(max(0.0, min(95.0, roof_dirty)), 1)
     light_transmission = round(max(5.0, min(100.0, light_transmission)), 1)
 
-    is_dirty_critical = (
-        roof_dirty > AUTO_CLEAN_DIRTY_THRESHOLD
-        or light_transmission < AUTO_CLEAN_LIGHT_THRESHOLD
-    )
-    cleaning_recommendation = "CLEANING" if is_dirty_critical else "TIDAK PERLU"
+    is_light_trigger = light_transmission < AUTO_CLEAN_LIGHT_THRESHOLD
+    cleaning_recommendation = "CLEANING" if is_light_trigger else "TIDAK PERLU"
 
     spray_seconds = _calculate_spray_seconds_from_dirt(roof_dirty)
     estimated_water_liters = calculate_water_usage_liters(spray_seconds)
     ai_score = _compute_ai_score(roof_dirty, light_transmission, system_health)
 
-    if is_dirty_critical:
+    if is_light_trigger or roof_dirty > AUTO_CLEAN_DIRTY_THRESHOLD:
         ai_status = "CRITICAL"
     elif system_health != "NORMAL":
         ai_status = "WARNING"
@@ -206,7 +203,7 @@ def _generate_gradual_report(
         )
 
     if force_dirty_next:
-        dirty_val = 24.5
+        dirty_val = 58.0
         return _build_report_from_values(
             light_transmission=_light_from_dirty(dirty_val),
             roof_dirty=dirty_val,
@@ -319,20 +316,20 @@ def _pick_month_clean_days(
 def _weather_profile_for_date(d: date) -> dict[str, float]:
     """
     Profil cuaca/musim:
-    - Jul s/d Sep: kemarau (~8x/bulan, jarak antar pembersihan maks 4 hari agar tidak bolong seminggu).
-    - Okt dan seterusnya: ~seminggu sekali (~4x/bulan, jarak wajar sekitar 5-9 hari).
+    - Jul s/d Sep: kemarau (~8x/bulan), akumulasi kotor bertahap hingga light < 30%.
+    - Okt dan seterusnya: ~seminggu sekali (~4x/bulan), akumulasi kotor lebih landai.
     """
     if d.month in (7, 8, 9):
         return {
-            "dust_gain_min": 2.4,
-            "dust_gain_max": 4.2,
+            "dust_gain_min": 13.5,
+            "dust_gain_max": 18.5,
             "target_cleans_min": 8,
             "target_cleans_max": 9,
             "max_gap_days": 4,
         }
     return {
-        "dust_gain_min": 1.3,
-        "dust_gain_max": 2.5,
+        "dust_gain_min": 6.8,
+        "dust_gain_max": 9.8,
         "target_cleans_min": 4,
         "target_cleans_max": 4,
         "max_gap_days": 9,
@@ -346,8 +343,8 @@ def build_daily_summaries(
 ) -> list[dict[str, Any]]:
     """
     Menghasilkan 1 summary harian sejak Juli 2026:
-    - Auto-cleaning dipicu setelah indikator kotor melebihi 20% (sehingga bar > 20% muncul dulu
-      pada hari terdeteksi melebihi ambang, lalu dibersihkan pada hari berikutnya).
+    - Kotoran atap naik secara bertahap dan landai dari hari ke hari sehingga
+      intensitas cahaya (light_transmission) turun pelan menuju < 30% sebelum dibersihkan.
     - Pemakaian air pada hari pembersihan dihitung berdasarkan kondisi kotor sebelum dibersihkan
       dengan variasi alami di sekitarnya.
     """
@@ -393,17 +390,17 @@ def build_daily_summaries(
 
         if extra_clean_ts or pending_auto_clean_next_day:
             was_cleaned = True
-            base_dirty = max(AUTO_CLEAN_DIRTY_THRESHOLD + 1.0, dirty_val)
-            jitter_dirty = rng.uniform(-0.8, 7.5)
+            base_dirty = max(54.0, dirty_val)
+            jitter_dirty = rng.uniform(-1.0, 5.5)
             dirty_before_clean = round(
-                max(AUTO_CLEAN_DIRTY_THRESHOLD + 0.6, min(42.0, base_dirty + jitter_dirty)),
+                max(53.5, min(63.0, base_dirty + jitter_dirty)),
                 1,
             )
             clean_spray_seconds = _calculate_spray_seconds_from_dirt(dirty_before_clean)
             clean_water_liters = calculate_water_usage_liters(clean_spray_seconds)
 
             pending_auto_clean_next_day = False
-            dirty_val = round(rng.uniform(1.5, 5.0), 1)
+            dirty_val = round(rng.uniform(1.5, 4.5), 1)
             light_val = _light_from_dirty(dirty_val)
             cleaned_at = (
                 extra_clean_ts
@@ -413,13 +410,30 @@ def build_daily_summaries(
         else:
             was_cleaned = False
             cleaned_at = None
-            gain = rng.uniform(profile["dust_gain_min"], profile["dust_gain_max"])
+
+            # Hitung berapa hari lagi menuju hari trigger berikutnya agar kenaikan landai & tidak curam
+            days_until_trigger = 1
+            probe = cur
+            while probe.day not in month_random_clean_days and days_until_trigger < int(profile["max_gap_days"]):
+                probe += timedelta(days=1)
+                if probe.month != cur.month:
+                    break
+                days_until_trigger += 1
+
+            target_trigger_dirty = rng.uniform(53.5, 57.5)
+            needed_gain = max(0.0, target_trigger_dirty - dirty_val)
 
             if cur.day in month_random_clean_days:
-                dirty_val = round(max(AUTO_CLEAN_DIRTY_THRESHOLD + 0.8, dirty_val + gain), 1)
+                # Hari trigger: pastikan melewati ambang cahaya < 30% (dirty >= 53.3%) secara halus
+                step_gain = max(rng.uniform(5.5, 11.5), needed_gain)
+                dirty_val = round(min(61.0, dirty_val + step_gain), 1)
                 pending_auto_clean_next_day = True
             else:
-                dirty_val = round(min(AUTO_CLEAN_DIRTY_THRESHOLD - 0.5, dirty_val + gain), 1)
+                # Bagi sisa kenaikan secara bertahap di hari-hari sebelum trigger
+                avg_step = needed_gain / max(1, days_until_trigger)
+                jitter = rng.uniform(0.85, 1.15)
+                step_gain = max(2.5, avg_step * jitter)
+                dirty_val = round(min(52.5, dirty_val + step_gain), 1)
 
             light_val = _light_from_dirty(dirty_val)
 

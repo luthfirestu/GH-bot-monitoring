@@ -337,7 +337,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
        ========================================================= */
     const CFG = {
       dirtyWarn: 15, dirtyCrit: 20, dirtyBarRed: 20,
-      lightWarn: 70, lightCrit: 30,
+      lightWarn: 30, lightCrit: 15,
       suddenDrop: 8,            // penurunan light (poin %) antar data realtime
       dailyRefreshMs: 60000
     };
@@ -348,7 +348,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     const toneColor = (t) => css(t === "good" ? "--good" : t === "warn" ? "--warn" : "--bad");
 
     const toneScore = (v) => (v >= 82 ? "good" : v >= 60 ? "warn" : "bad");
-    const toneLight = (v) => (v >= 75 ? "good" : v >= CFG.lightWarn ? "warn" : "bad");
+    const toneLight = (v) => (v >= 70 ? "good" : v >= CFG.lightWarn ? "warn" : "bad");
     const toneDirty = (v) => (v < CFG.dirtyWarn ? "good" : v <= CFG.dirtyCrit ? "warn" : "bad");
     const toneStatus = (s) => (s === "GOOD" ? "good" : s === "WARNING" ? "warn" : "bad");
 
@@ -425,8 +425,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
       if (r.ai_status === "CRITICAL") a.push({ lvl: "bad", text: `AI mendeteksi kondisi CRITICAL (skor ${r.ai_score}%).` });
       if (r.roof_dirty > CFG.dirtyCrit) a.push({ lvl: "bad", text: `Roof Dirty ${r.roof_dirty}% melewati batas CRITICAL (${CFG.dirtyCrit}%).` });
       else if (r.roof_dirty >= CFG.dirtyWarn) a.push({ lvl: "warn", text: `Roof Dirty ${r.roof_dirty}% mendekati batas pembersihan (${CFG.dirtyCrit}%).` });
-      if (r.light_transmission < CFG.lightWarn) a.push({ lvl: "bad", text: `Light Transmission turun menjadi ${r.light_transmission}% (di bawah batas ${CFG.lightWarn}%).` });
-      else if (r.light_transmission < 75) a.push({ lvl: "warn", text: `Light Transmission ${r.light_transmission}% mulai menurun.` });
+      if (r.light_transmission < CFG.lightWarn) a.push({ lvl: "bad", text: `Light Transmission turun menjadi ${r.light_transmission}% (di bawah batas pembersihan ${CFG.lightWarn}%).` });
+      else if (r.light_transmission < 70) a.push({ lvl: "warn", text: `Light Transmission ${r.light_transmission}% mulai menurun.` });
       if (r.system_health === "BAD") a.push({ lvl: "warn", text: "System Health BAD: periksa sensor atau perangkat." });
       if (hist.length >= 2) {
         const drop = hist[hist.length - 2].light_transmission - r.light_transmission;
@@ -507,7 +507,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
           interaction: { mode: "index", intersect: false },
           scales: { x: { ticks: { maxTicksLimit: 15 } }, y: { min: 0, max: 100 } },
           plugins: { annotation: { annotations: {
-            dirtyLimit: annotationLine(CFG.dirtyCrit, `Batas dirty ${CFG.dirtyCrit}%`, "rgba(248,113,113,.85)")
+            dirtyLimit: annotationLine(CFG.dirtyCrit, `Batas dirty ${CFG.dirtyCrit}%`, "rgba(248,113,113,.85)"),
+            lightLimit: annotationLine(CFG.lightWarn, `Batas light ${CFG.lightWarn}%`, "rgba(56,189,248,.8)")
           } } }
         }
       });
@@ -600,7 +601,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     function heatColor(metric, v) {
       let good;
       if (metric === "roof_dirty") good = 1 - clamp(v / CFG.dirtyCrit, 0, 1);
-      else if (metric === "light_transmission") good = clamp((v - 48) / 42, 0, 1);
+      else if (metric === "light_transmission") good = clamp((v - CFG.lightWarn) / (95 - CFG.lightWarn), 0, 1);
       else good = clamp((v - 40) / 58, 0, 1);
       return `hsl(${Math.round(good * 130)} 65% 42%)`;
     }
